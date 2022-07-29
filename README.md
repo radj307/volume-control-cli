@@ -2,7 +2,7 @@
 
 Commandline app-specific volume control utility for Windows.  
 
-This is the commandline version of **[Volume Control](https://github.com/radj307/volume-control)**, which adds fully configurable & extensible hotkeys for controlling the mixer volume level of specific apps *(and much more; it even supports addons)*.
+This is the commandline version of **[Volume Control](https://github.com/radj307/volume-control)**, which adds fully configurable & extensible hotkeys for controlling the mixer volume level of specific apps *(and much more)*.
 
 
 ## Features
