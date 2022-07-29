@@ -23,3 +23,7 @@ This is the commandline version of **[Volume Control](https://github.com/radj307
  1. Download the [latest release](https://github.com/radj307/vccli).
 
  2. Extract to a location of your choice. *Preferably [somewhere on your PATH](https://stackoverflow.com/a/44272417/8705305) if you want to invoke `vccli` from any working directory.*
+
+## Usage
+
+Run `vccli -h` in a terminal to see the built-in usage guide & the most up-to-date documentation.  
