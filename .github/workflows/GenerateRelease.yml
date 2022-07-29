@@ -46,6 +46,7 @@ env:
   # If this is blank, the value specified by '$PROJECT_NAME' is used instead. (See the 'Configure Environment' step.)
   BINARY_NAME: ''
   BUILD_TYPE: Release
+  GET_VERSION_NUMBER_ARGS: "--version --quiet"
 
 jobs:
   create-binaries:
@@ -96,14 +97,14 @@ jobs:
       if:     ${{ runner.os == 'Windows' }}
       run:    |
               cd "${{github.workspace}}/build/${{env.PROJECT_NAME}}"
-              Compress-Archive "${{env.BINARY_NAME || env.PROJECT_NAME}}.exe" "${{env.PROJECT_NAME}}-$(.\${{env.PROJECT_NAME}} -vq)-Windows.zip"
+              Compress-Archive "${{env.BINARY_NAME || env.PROJECT_NAME}}.exe" "${{env.PROJECT_NAME}}-$(.\${{env.PROJECT_NAME}} $GET_VERSION_NUMBER_ARGS)-Windows.zip"
       shell:  powershell
       # Linux / macOS
     - name:   Create Archive (Linux/macOS)
       if:     ${{ runner.os != 'Windows' }}
       run:    |
               cd "${{github.workspace}}/build/${{env.PROJECT_NAME}}"
-              zip -T9 "${{env.PROJECT_NAME}}-$(./${{env.PROJECT_NAME}} -vq)-${{runner.os}}.zip" "${{env.BINARY_NAME || env.PROJECT_NAME}}"
+              zip -T9 "${{env.PROJECT_NAME}}-$(./${{env.PROJECT_NAME}} $GET_VERSION_NUMBER_ARGS)-${{runner.os}}.zip" "${{env.BINARY_NAME || env.PROJECT_NAME}}"
       shell:  bash
       
     # Upload Artifact
