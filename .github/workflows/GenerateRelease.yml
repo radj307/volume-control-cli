@@ -97,16 +97,16 @@ jobs:
       if:     ${{ runner.os == 'Windows' }}
       run:    |
               cd "${{github.workspace}}/build/${{env.PROJECT_NAME}}"
-              Compress-Archive "${{env.BINARY_NAME || env.PROJECT_NAME}}.exe" "${{env.PROJECT_NAME}}-$(.\${{env.PROJECT_NAME}} $GET_VERSION_NUMBER_ARGS)-Windows.zip"
+              Compress-Archive "${{env.BINARY_NAME || env.PROJECT_NAME}}.exe" "${{env.PROJECT_NAME}}-$(.\${{env.PROJECT_NAME}} ${{env.GET_VERSION_NUMBER_ARGS}})-Windows.zip"
       shell:  powershell
       # Linux / macOS
     - name:   Create Archive (Linux/macOS)
       if:     ${{ runner.os != 'Windows' }}
       run:    |
               cd "${{github.workspace}}/build/${{env.PROJECT_NAME}}"
-              zip -T9 "${{env.PROJECT_NAME}}-$(./${{env.PROJECT_NAME}} $GET_VERSION_NUMBER_ARGS)-${{runner.os}}.zip" "${{env.BINARY_NAME || env.PROJECT_NAME}}"
+              zip -T9 "${{env.PROJECT_NAME}}-$(./${{env.PROJECT_NAME}} ${{env.GET_VERSION_NUMBER_ARGS}})-${{runner.os}}.zip" "${{env.BINARY_NAME || env.PROJECT_NAME}}"
       shell:  bash
-      
+
     # Upload Artifact
     - name:   Upload Artifact
       uses:   actions/upload-artifact@v2
