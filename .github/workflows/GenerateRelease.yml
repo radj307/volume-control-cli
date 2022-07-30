@@ -18,7 +18,7 @@ on:
       is-draft:
         description:  'Draft'
         required:     false
-        default:      true
+        default:      false
         type:         boolean
       is-prerelease:
         description:  'Pre-Release'
@@ -144,7 +144,7 @@ jobs:
       #if:   ${{ github.event_name == 'workflow_dispatch' }}
       uses: softprops/action-gh-release@v1
       with:
-        draft:                    ${{ github.event.inputs.is-draft || true }}
+        draft:                    ${{ github.event.inputs.is-draft || false }}
         prerelease:               ${{ github.event.inputs.is-prerelease || false }}
         tag_name:                 ${{ steps.get_version.outputs.VERSION }}
         name:                     ${{ steps.get_version.outputs.NAME }}
