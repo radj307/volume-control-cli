@@ -343,9 +343,9 @@ namespace vccli {
 				dev->GetId(&sbuf);
 				std::string deviceID{ w_converter.to_bytes(sbuf) };
 
-				const auto& deviceName{ getDeviceFriendlyName(dev) };
+				const auto& deviceName{ str::trim(getDeviceFriendlyName(dev)) };
 
-				if (!target_pid.has_value() && (str::tolower(deviceID) == target_id_lower || str::tolower(deviceName) == target_id_lower)) {
+				if (!target_pid.has_value() && (target_id_lower == str::tolower(deviceID) || target_id_lower == str::tolower(deviceName))) {
 					IAudioEndpointVolume* endpointVolume{};
 					dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpointVolume);
 					object = std::make_unique<EndpointVolume>(endpointVolume, deviceName, getDeviceDataFlow(dev));
