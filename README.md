@@ -1,7 +1,7 @@
 # Volume Control CLI
 
 Commandline app-specific volume control utility for Windows.  
-**Note: Audio input devices are not supported.**
+**Supports both Audio Input & Output Devices**
 
 This is the commandline version of **[Volume Control](https://github.com/radj307/volume-control)**, which adds fully configurable & extensible hotkeys for controlling the mixer volume level of specific apps *(and much more)*.  
 
