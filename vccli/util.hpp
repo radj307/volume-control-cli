@@ -46,7 +46,7 @@ namespace vccli {
 		return str::tolower(std::filesystem::path{ l }.replace_extension().generic_string()) == str::tolower(std::filesystem::path{ r }.replace_extension().generic_string());
 	}
 
-	inline std::optional<std::string> GetProcessNameFrom(DWORD pid)
+	inline std::optional<std::string> GetProcessNameFrom(DWORD const& pid)
 	{
 		if (HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
 			DWORD len{ 260 };
@@ -64,36 +64,62 @@ namespace vccli {
 		return std::nullopt;
 	}
 
+	inline std::string getDeviceID(IMMDevice* dev)
+	{
+		LPWSTR sbuf;
+		dev->GetId(&sbuf);
+		return w_converter.to_bytes(sbuf);
+	}
+	/**
+	 * @brief		Retrieves the specified property value from the given device's property store.
+	 * @param dev	The IMMDevice to retrieve properties from.
+	 * @param pkey	The PROPERTYKEY structure to target.
+	 * @returns		PROPVARIANT
+	 */
+	inline PROPVARIANT getDeviceProperty(IMMDevice* dev, const PROPERTYKEY& pkey)
+	{
+		PROPVARIANT pv{};
+		if (IPropertyStore* properties; dev->OpenPropertyStore(STGM_READ, &properties) == S_OK) {
+			properties->GetValue(pkey, &pv);
+			properties->Release();
+		}
+		return pv;
+	}
+	/**
+	 * @brief		Retrieve the name of the given device from its properties.
+	 *\n			PKEY_DeviceInterface_FriendlyName
+	 * @param dev	The IMMDevice to retrieve properties from.
+	 * @returns		std::string
+	 */
 	inline std::string getDeviceFriendlyName(IMMDevice* dev)
 	{
-		if (IPropertyStore* properties; dev->OpenPropertyStore(STGM_READ, &properties) == S_OK) {
-			PROPVARIANT pv;
-			properties->GetValue(PKEY_DeviceInterface_FriendlyName, &pv);
-			properties->Release();
-			return w_converter.to_bytes(pv.pwszVal);
-		}
-		return{};
+		return w_converter.to_bytes(getDeviceProperty(dev, PKEY_DeviceInterface_FriendlyName).pwszVal);
 	}
+	/**
+	 * @brief		Retrieve the name of the given device from its properties.
+	 *\n			PKEY_Device_FriendlyName
+	 * @param dev	The IMMDevice to retrieve properties from.
+	 * @returns		std::string
+	 */
 	inline std::string getDeviceName(IMMDevice* dev)
 	{
-		if (IPropertyStore* properties; dev->OpenPropertyStore(STGM_READ, &properties) == S_OK) {
-			PROPVARIANT pv;
-			properties->GetValue(PKEY_Device_FriendlyName, &pv);
-			properties->Release();
-			return w_converter.to_bytes(pv.pwszVal);
-		}
-		return{};
+		return w_converter.to_bytes(getDeviceProperty(dev, PKEY_Device_FriendlyName).pwszVal);
 	}
+	/**
+	 * @brief		Retrieve the description of the given device from its properties.
+	 *\n			PKEY_Device_DeviceDesc
+	 * @param dev	The IMMDevice to retrieve properties from.
+	 * @returns		std::string
+	 */
 	inline std::string getDeviceDesc(IMMDevice* dev)
 	{
-		if (IPropertyStore* properties; dev->OpenPropertyStore(STGM_READ, &properties) == S_OK) {
-			PROPVARIANT pv;
-			properties->GetValue(PKEY_Device_DeviceDesc, &pv);
-			properties->Release();
-			return w_converter.to_bytes(pv.pwszVal);
-		}
-		return{};
+		return w_converter.to_bytes(getDeviceProperty(dev, PKEY_Device_DeviceDesc).pwszVal);
 	}
+	/**
+	 * @brief		Queries the given device to determine whether it is an input or output device.
+	 * @param dev	The IMMDevice to query.
+	 * @returns		EDataFlow
+	 */
 	inline EDataFlow getDeviceDataFlow(IMMDevice* dev)
 	{
 		IMMEndpoint* endpoint;
@@ -103,6 +129,11 @@ namespace vccli {
 		endpoint->Release();
 		return flow;
 	}
+	/**
+	 * @brief			Convert the given EDataFlow enumeration to a string representation.
+	 * @param dataflow	An EDataFlow enum value.
+	 * @returns			std::string
+	 */
 	inline std::string DataFlowToString(EDataFlow const& dataflow)
 	{
 		switch (dataflow) {
@@ -114,5 +145,10 @@ namespace vccli {
 		default:
 			return{};
 		}
+	}
+
+	inline std::ostream& operator<<(std::ostream& os, const EDataFlow& df)
+	{
+		return os << DataFlowToString(df);
 	}
 }

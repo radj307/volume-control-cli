@@ -116,8 +116,9 @@ namespace vccli {
 
 	struct EndpointVolume : VolumeController<IAudioEndpointVolume> {
 		EDataFlow flow;
+		bool isDefault;
 
-		EndpointVolume(IAudioEndpointVolume* vol, std::string const& resolved_name, EDataFlow const& flow) : base(vol, resolved_name), flow{ flow } {}
+		EndpointVolume(IAudioEndpointVolume* vol, std::string const& resolved_name, EDataFlow const& flow, const bool isDefault) : base(vol, resolved_name), flow{ flow }, isDefault{ isDefault } {}
 
 		bool getMuted() const override
 		{
@@ -140,6 +141,11 @@ namespace vccli {
 		{
 			vol->SetMasterVolumeLevelScalar(level, &default_context);
 		}
-		constexpr std::optional<std::string> type_name() const override { return{ DataFlowToString(flow) + " Device"}; }
+		constexpr std::optional<std::string> type_name() const override
+		{
+			std::string s{ DataFlowToString(flow) + " Device" };
+			if (isDefault) s += " (Default)";
+			return s;
+		}
 	};
 }

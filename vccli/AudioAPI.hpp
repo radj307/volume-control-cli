@@ -315,26 +315,29 @@ namespace vccli {
 				EDataFlow defaultDevFlow{ deviceFlowFilter };
 				if (defaultDevFlow == EDataFlow::eAll)
 					defaultDevFlow = (defaultDevIsOutput ? EDataFlow::eRender : EDataFlow::eCapture);
+
 				deviceEnumerator->GetDefaultAudioEndpoint(defaultDevFlow, ERole::eMultimedia, &dev);
 				deviceEnumerator->Release();
 				IAudioEndpointVolume* endpoint{};
 				dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpoint);
-				const auto& devName{ getDeviceFriendlyName(dev) };
+				const auto& devName{ str::trim(getDeviceFriendlyName(dev)) };
 				dev->Release();
 
-				return std::make_unique<EndpointVolume>(endpoint, devName, defaultDevFlow);
-			}
+				return std::make_unique<EndpointVolume>(endpoint, devName, defaultDevFlow, true);
+			} // Else we have an actual target ID to find
+
+			// Check if we have a valid PID
 			std::optional<DWORD> target_pid;
 			if (std::all_of(target_id.begin(), target_id.end(), str::stdpred::isdigit))
 				target_pid = str::stoul(target_id);
 
+			// Enumerate all devices of the specified I/O type(s):
 			IMMDeviceCollection* devices;
 			deviceEnumerator->EnumAudioEndpoints(deviceFlowFilter, ERole::eMultimedia, &devices);
 			deviceEnumerator->Release();
 
 			UINT count;
 			devices->GetCount(&count);
-
 
 			for (UINT i{ 0u }; object == nullptr && i < count; ++i) {
 				devices->Item(i, &dev);
@@ -345,12 +348,13 @@ namespace vccli {
 
 				const auto& deviceName{ str::trim(getDeviceFriendlyName(dev)) };
 
+				// Check if this device is a match
 				if (!target_pid.has_value() && (target_id_lower == str::tolower(deviceID) || target_id_lower == str::tolower(deviceName))) {
 					IAudioEndpointVolume* endpointVolume{};
 					dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpointVolume);
-					object = std::make_unique<EndpointVolume>(endpointVolume, deviceName, getDeviceDataFlow(dev));
+					object = std::make_unique<EndpointVolume>(endpointVolume, deviceName, getDeviceDataFlow(dev), isDefaultDevice(dev));
 				}
-				else {
+				else { // Check for matching sessions on this device:
 					IAudioSessionManager2* mgr{};
 					dev->Activate(__uuidof(IAudioSessionManager2), 0, NULL, (void**)&mgr);
 
@@ -362,6 +366,7 @@ namespace vccli {
 					IAudioSessionControl2* sessionControl2;
 					ISimpleAudioVolume* sessionVolumeControl;
 
+					// Enumerate all audio sessions on this device:
 					int sessionCount;
 					sessionEnumerator->GetCount(&sessionCount);
 
@@ -376,6 +381,7 @@ namespace vccli {
 
 						const auto& pname{ GetProcessNameFrom(pid) };
 
+						// Check if this session is a match:
 						if ((pname.has_value() && target_id_lower == str::tolower(pname.value())) || (target_pid.has_value() && target_pid.value() == pid)) {
 							sessionControl2->QueryInterface<ISimpleAudioVolume>(&sessionVolumeControl);
 							sessionControl2->Release();
@@ -383,18 +389,39 @@ namespace vccli {
 							break;
 						}
 					}
-
 					sessionEnumerator->Release();
 				}
-
 				dev->Release();
 			}
 			devices->Release();
 
-			if (object == nullptr)
+			if (object == nullptr) // use a NullVolume struct instead of returning nullptr
 				object = std::make_unique<NullVolume>(target_id);
 
 			return object;
+		}
+
+		static bool isDefaultDevice(IMMDevice* dev)
+		{
+			const auto& devID{ getDeviceID(dev) };
+			IMMDeviceEnumerator* deviceEnumerator{ getDeviceEnumerator() };
+			bool isDefault{ false };
+			IMMDevice* tmp;
+			std::string tmpID{};
+			deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, ERole::eMultimedia, &tmp);
+			tmpID = getDeviceID(tmp);
+			tmp->Release();
+			if (tmpID == devID)
+				isDefault = true;
+			else {
+				deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eCapture, ERole::eMultimedia, &tmp);
+				tmpID = getDeviceID(tmp);
+				tmp->Release();
+				if (tmpID == devID)
+					isDefault = true;
+			}
+			deviceEnumerator->Release();
+			return isDefault;
 		}
 		/**
 		 * @brief				Resolves the given identifier to a process ID by searching for it in a snapshot.
