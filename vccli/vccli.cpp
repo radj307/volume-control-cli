@@ -198,26 +198,28 @@ inline void handleVolumeArgs(const opt3::ArgManager& args, const vccli::Volume* 
 		const auto& value{ increment.value() };
 		if (!std::all_of(value.begin(), value.end(), str::stdpred::isdigit))
 			throw make_exception("Invalid Number Specified:  ", value);
-		if (controller->getVolumeScaled() == 100.0f)
+		if (controller->getVolumeScaled() == 100.0f) {
 			if (!quiet) std::cout << "Volume is" << indent(MARGIN_WIDTH, 10ull) << colors(COLOR::WARN) << "100" << colors() << '\n';
-			else {
-				controller->incrementVolume(str::stof(value) / 100.0f);
-				if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(controller->getVolumeScaled()) << colors() << " (+" << colors(COLOR::VALUE) << value << colors() << ')' << '\n';
-			}
+		}
+		else {
+			controller->incrementVolume(str::stof(value) / 100.0f);
+			if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(controller->getVolumeScaled()) << colors() << " (+" << colors(COLOR::VALUE) << value << colors() << ')' << '\n';
+		}
 	}
 	else if (decrement.has_value()) {
 		const auto& value{ decrement.value() };
 		if (!std::all_of(value.begin(), value.end(), str::stdpred::isdigit))
 			throw make_exception("Invalid Number Specified:  ", value);
-		if (controller->getVolumeScaled() == 0.0f)
+		if (controller->getVolumeScaled() == 0.0f) {
 			if (!quiet) std::cout << "Volume is" << indent(MARGIN_WIDTH, 10ull) << colors(COLOR::WARN) << "0" << colors() << '\n';
-			else {
-				controller->decrementVolume(str::stof(value) / 100.0f);
-				if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(controller->getVolumeScaled()) << colors() << " (-" << colors(COLOR::VALUE) << value << colors() << ')' << '\n';
-			}
+		}
+		else {
+			controller->decrementVolume(str::stof(value) / 100.0f);
+			if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(controller->getVolumeScaled()) << colors() << " (-" << colors(COLOR::VALUE) << value << colors() << ')' << '\n';
+		}
 	}
-	if (args.check_any<opt3::Flag, opt3::Option>('v', "volume")) {
-		if (const auto& captured{ args.getv_any<opt3::Flag, opt3::Option>('v', "volume") }; captured.has_value()) {
+	if (const auto& arg{ args.get_any<opt3::Flag, opt3::Option>('v', "volume") }; arg.has_value()) {
+		if (const auto& captured{ arg.value().getValue() }; captured.has_value()) {
 			// Set
 			const auto& value{ captured.value() };
 			if (!std::all_of(value.begin(), value.end(), str::stdpred::isdigit))
@@ -270,8 +272,10 @@ inline void handleMuteArgs(const opt3::ArgManager& args, const vccli::Volume* co
 		}
 	}
 
-	if (args.check_any<opt3::Flag, opt3::Option>('m', "is-muted")) {
-		if (const auto& captured{ args.getv_any<opt3::Flag, opt3::Option>('m', "is-muted") }; captured.has_value()) {
+
+
+	if (const auto& arg{ args.get_any<opt3::Flag, opt3::Option>('m', "is-muted") }; arg.has_value()) {
+		if (const auto& captured{ arg.value().getValue() }; captured.has_value()) {
 			if (mute || unmute) throw make_exception("Conflicting Options Specified:  ", colors(COLOR::ERR), "-M", colors(), '|', colors(COLOR::ERR), "--is-muted", colors(COLOR::ERR), " && (", colors(COLOR::ERR), "-m", colors(), '|', colors(COLOR::ERR), "--mute", colors(), " || ", colors(COLOR::ERR), "-u", colors(), '|', colors(COLOR::ERR), "--unmute", colors(), ')');
 			// Set
 			const auto& value{ str::trim(captured.value()) };
