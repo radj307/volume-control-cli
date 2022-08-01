@@ -11,11 +11,15 @@
 #include <optional>
 #include <string>
 
+#include <doctest/doctest.h>
+
+#define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include <audiopolicy.h>
+#include <mmdeviceapi.h>
 #include <tlhelp32.h>
 #include <psapi.h>
-
-#include <mmdeviceapi.h>
+#include <endpointvolume.h>
 #include <Functiondiscoverykeys_devpkey.h>
 
 namespace vccli {
@@ -33,6 +37,11 @@ namespace vccli {
 		LPVOID lpMsgBuf{};
 		FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, static_cast<DWORD>(err), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&lpMsgBuf, 0, NULL);
 		return{ (char*)lpMsgBuf };
+	}
+
+	TEST_CASE("GetErrorMessageFrom")
+	{
+		CHECK(GetErrorMessageFrom(0) == "The operation completed successfully.\r\n");
 	}
 
 	/**
@@ -62,6 +71,19 @@ namespace vccli {
 			}
 		}
 		return std::nullopt;
+	}
+
+	inline std::string getSessionInstanceIdentifier(IAudioSessionControl2* session)
+	{
+		LPWSTR sbuf;
+		session->GetSessionInstanceIdentifier(&sbuf);
+		return w_converter.to_bytes(sbuf);
+	}
+	inline std::string getSessionIdentifier(IAudioSessionControl2* session)
+	{
+		LPWSTR sbuf;
+		session->GetSessionIdentifier(&sbuf);
+		return w_converter.to_bytes(sbuf);
 	}
 
 	inline std::string getDeviceID(IMMDevice* dev)
@@ -134,7 +156,7 @@ namespace vccli {
 	 * @param dataflow	An EDataFlow enum value.
 	 * @returns			std::string
 	 */
-	inline std::string DataFlowToString(EDataFlow const& dataflow)
+	constexpr std::string DataFlowToString(EDataFlow const& dataflow)
 	{
 		switch (dataflow) {
 		case EDataFlow::eRender:
@@ -142,13 +164,9 @@ namespace vccli {
 		case EDataFlow::eCapture:
 			return "Input";
 		case EDataFlow::eAll:
+			return "Input/Output";
 		default:
 			return{};
 		}
-	}
-
-	inline std::ostream& operator<<(std::ostream& os, const EDataFlow& df)
-	{
-		return os << DataFlowToString(df);
 	}
 }

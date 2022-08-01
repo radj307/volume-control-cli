@@ -1,19 +1,23 @@
 #pragma once
 #include <math.hpp>
 
+#define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <mmdeviceapi.h>
 #include <audiopolicy.h>
 #include <endpointvolume.h>
+
+#include <typeinfo>
 
 namespace vccli {
 	/// @brief	GUID to use as 'context' parameter in setter functions.
 	inline static constexpr GUID default_context{};
 
 	struct Volume {
-		std::string resolved_name;
+		std::string resolved_name, identifier;
+		EDataFlow flow_type;
 
-		Volume(std::string const& resolved_name) : resolved_name{ resolved_name } {}
+		constexpr Volume(std::string const& resolved_name, std::string const& identifier, const EDataFlow flow_type) : resolved_name{ resolved_name }, identifier{ identifier }, flow_type{ flow_type } {}
 		virtual ~Volume() = default;
 
 		virtual bool getMuted() const = 0;
@@ -53,10 +57,16 @@ namespace vccli {
 			setVolume(math::scale(level, scale, { 0.0f, 1.0f }));
 		}
 
-		virtual constexpr bool isValid() const = 0;
-
 		virtual constexpr std::optional<std::string> type_name() const = 0;
+		constexpr std::string getFlowTypeName() const { return DataFlowToString(this->flow_type); }
+
+		template<std::derived_from<Volume> T>
+		constexpr bool is_derived_type() const
+		{
+			return typeid(*this) == typeid(T);
+		}
 	};
+
 	template<std::derived_from<IUnknown> T>
 	struct VolumeController : Volume {
 	protected:
@@ -64,31 +74,19 @@ namespace vccli {
 
 		T* vol;
 
-		VolumeController(T* vol, std::string const& resolved_name) : Volume(resolved_name), vol{ vol } {}
+		constexpr VolumeController(T* vol, std::string const& resolved_name, std::string const& identifier, const EDataFlow flow_type) : Volume(resolved_name, identifier, flow_type), vol{ vol } {}
 
 	public:
 		virtual ~VolumeController()
 		{
 			if (this->vol) ((IUnknown*)this->vol)->Release();
 		}
-
-		constexpr bool isValid() const override
-		{
-			return vol != nullptr;
-		}
-	};
-	struct NullVolume : VolumeController<IUnknown> {
-		NullVolume(std::string const& resolved_name) : base(nullptr, resolved_name) {}
-		bool getMuted() const override { throw make_exception("Object is null!"); }
-		void setMuted(const bool) const override { throw make_exception("Object is null!"); }
-		float getVolume() const override { throw make_exception("Object is null!"); }
-		void setVolume(const float&) const override { throw make_exception("Object is null!"); }
-		constexpr bool isValid() const override { return false; }
-		constexpr std::optional<std::string> type_name() const override { return std::nullopt; }
 	};
 
 	struct ApplicationVolume : public VolumeController<ISimpleAudioVolume> {
-		ApplicationVolume(ISimpleAudioVolume* vol, std::string const& resolved_name) : base(vol, resolved_name) {}
+		std::string dev_id, sessionIdentifier, sessionInstanceIdentifier;
+
+		constexpr ApplicationVolume(ISimpleAudioVolume* vol, std::string const& resolved_name, const DWORD pid, const EDataFlow flow_type, std::string const& deviceID, std::string const& sessionIdentifier, std::string const& sessionInstanceIdentifier) : base(vol, resolved_name, std::to_string(pid), flow_type), dev_id{ deviceID }, sessionIdentifier{ sessionIdentifier }, sessionInstanceIdentifier{ sessionInstanceIdentifier } {}
 
 		bool getMuted() const override
 		{
@@ -111,14 +109,16 @@ namespace vccli {
 		{
 			vol->SetMasterVolume(level, &default_context);
 		}
-		constexpr std::optional<std::string> type_name() const override { return{ "Session" }; }
+		constexpr std::optional<std::string> type_name() const override
+		{
+			return{ "Session" };
+		}
 	};
 
 	struct EndpointVolume : VolumeController<IAudioEndpointVolume> {
-		EDataFlow flow;
 		bool isDefault;
 
-		EndpointVolume(IAudioEndpointVolume* vol, std::string const& resolved_name, EDataFlow const& flow, const bool isDefault) : base(vol, resolved_name), flow{ flow }, isDefault{ isDefault } {}
+		constexpr EndpointVolume(IAudioEndpointVolume* vol, std::string const& resolved_name, std::string const& dGuid, const EDataFlow flow_type, const bool isDefault) : base(vol, resolved_name, dGuid, flow_type), isDefault{ isDefault } {}
 
 		bool getMuted() const override
 		{
@@ -143,9 +143,7 @@ namespace vccli {
 		}
 		constexpr std::optional<std::string> type_name() const override
 		{
-			std::string s{ DataFlowToString(flow) + " Device" };
-			if (isDefault) s += " (Default)";
-			return s;
+			return{ "Device" };
 		}
 	};
 }

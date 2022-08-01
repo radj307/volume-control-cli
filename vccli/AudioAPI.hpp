@@ -5,10 +5,7 @@
 #include <make_exception.hpp>
 #include <math.hpp>
 
-#include <Windows.h>
-#include <mmdeviceapi.h>
-#include <audiopolicy.h>
-#include <endpointvolume.h>
+#define $release(var) var->Release(); var = nullptr;
 
 namespace vccli {
 	struct ProcessInfoLookup {
@@ -36,6 +33,20 @@ namespace vccli {
 			return std::nullopt;
 		}
 	};
+	struct DeviceInfo {
+		std::string name, id;
+		EDataFlow flow;
+		bool isDefault;
+
+		constexpr DeviceInfo(std::string const& name, std::string const& id, const EDataFlow flow, const bool isDefault) : name{ name }, id{ id }, flow{ flow }, isDefault{ isDefault } {}
+
+		constexpr std::optional<std::string> type_name() const
+		{
+			std::string s{ DataFlowToString(flow) + " Device" };
+			if (isDefault) s += " (Default)";
+			return s;
+		}
+	};
 
 	class AudioAPI {
 	#pragma region Internal
@@ -45,46 +56,6 @@ namespace vccli {
 			if (const auto& hr{ CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (void**)&deviceEnumerator) }; hr != S_OK)
 				throw make_exception(GetErrorMessageFrom(hr), " (code ", hr, ')');
 			return{ deviceEnumerator };
-		}
-		static IMMDevice* getDevice(const std::string& device_id)
-		{
-			const auto& deviceEnumerator{ getDeviceEnumerator() };
-
-			IMMDevice* dev;
-			IMMDeviceCollection* devices;
-			deviceEnumerator->EnumAudioEndpoints(EDataFlow::eRender, ERole::eMultimedia, &devices);
-
-			UINT count;
-			devices->GetCount(&count);
-
-			LPWSTR sbuf{};
-
-			for (UINT i{ 0u }; i < count; ++i) {
-				devices->Item(i, &dev);
-
-				if (dev->GetId(&sbuf) == S_OK && w_converter.to_bytes(sbuf) == device_id) {
-					devices->Release();
-					deviceEnumerator->Release();
-
-					return dev;
-				}
-			}
-
-			devices->Release();
-			deviceEnumerator->Release();
-
-			return nullptr;
-		}
-		static IMMDevice* getDefaultDevice()
-		{
-			auto* deviceEnumerator{ getDeviceEnumerator() };
-
-			IMMDevice* dev;
-			deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, ERole::eMultimedia, &dev);
-
-			deviceEnumerator->Release();
-
-			return dev;
 		}
 		/// @brief	Gets the volume control object for the specified process from the specified device.
 		static ISimpleAudioVolume* getVolumeObject(const DWORD pid, IMMDevice* device)
@@ -230,7 +201,58 @@ namespace vccli {
 	#pragma endregion Internal
 
 	public:
-		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcesses(EDataFlow flow = EDataFlow::eRender, ERole role = ERole::eMultimedia)
+		static IMMDevice* getDevice(const std::string& device_id)
+		{
+			const auto& deviceEnumerator{ getDeviceEnumerator() };
+
+			IMMDevice* dev;
+			IMMDeviceCollection* devices;
+			deviceEnumerator->EnumAudioEndpoints(EDataFlow::eRender, ERole::eMultimedia, &devices);
+
+			UINT count;
+			devices->GetCount(&count);
+
+			LPWSTR sbuf{};
+
+			for (UINT i{ 0u }; i < count; ++i) {
+				devices->Item(i, &dev);
+
+				if (dev->GetId(&sbuf) == S_OK && w_converter.to_bytes(sbuf) == device_id) {
+					devices->Release();
+					deviceEnumerator->Release();
+
+					return dev;
+				}
+			}
+
+			devices->Release();
+			deviceEnumerator->Release();
+
+			return nullptr;
+		}
+		static IMMDevice* getDefaultDevice()
+		{
+			auto* deviceEnumerator{ getDeviceEnumerator() };
+
+			IMMDevice* dev;
+			deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, ERole::eMultimedia, &dev);
+
+			deviceEnumerator->Release();
+
+			return dev;
+		}
+		static std::string getDeviceName(std::string const& devID)
+		{
+			auto* deviceEnumerator{ getDeviceEnumerator() };
+			IMMDevice* dev;
+			deviceEnumerator->GetDevice(w_converter.from_bytes(devID).c_str(), &dev);
+			$release(deviceEnumerator);
+			std::string name{ getDeviceFriendlyName(dev) };
+			$release(dev);
+			return name;
+		}
+
+		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcesses(EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
 		{
 			ProcessInfoLookup::pInfo_list_t vec;
 
@@ -290,21 +312,87 @@ namespace vccli {
 			vec.shrink_to_fit();
 			return vec;
 		}
-		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcessesSorted(const std::function<bool(std::pair<DWORD, std::string>, std::pair<DWORD, std::string>)>& sorting_predicate, EDataFlow flow = EDataFlow::eRender, ERole role = ERole::eMultimedia)
+		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcessesSorted(const std::function<bool(std::pair<DWORD, std::string>, std::pair<DWORD, std::string>)>& sorting_predicate, EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
 		{
 			std::vector<std::pair<DWORD, std::string>> vec{ GetAllAudioProcesses(flow, role) };
 			std::sort(vec.begin(), vec.end(), sorting_predicate);
 			return vec;
 		}
-		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcessesSorted(EDataFlow flow = EDataFlow::eRender, ERole role = ERole::eMultimedia)
+		static ProcessInfoLookup::pInfo_list_t GetAllAudioProcessesSorted(EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
 		{
 			return GetAllAudioProcessesSorted(std::less<std::pair<DWORD, std::string>>{}, flow, role);
 		}
 
-		/// @brief	Gets the appropriate volume control object for the given string.
-		static std::unique_ptr<Volume> getObject(const std::string& target_id, EDataFlow const& deviceFlowFilter, const bool& defaultDevIsOutput = true)
+		static std::vector<DeviceInfo> GetAllAudioDevices(EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
 		{
-			const auto& target_id_lower{ str::tolower(target_id) };
+
+			IMMDeviceEnumerator* deviceEnumerator{ getDeviceEnumerator() };
+			IMMDevice* dev;
+
+			std::wstring defaultOutputDevID, defaultInputDevID;
+			LPWSTR sbuf;
+
+			// Get default output device id
+			deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, role, &dev);
+			dev->GetId(&sbuf);
+			defaultOutputDevID = sbuf;
+			dev->Release();
+			// Get default input device id
+			deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eCapture, role, &dev);
+			dev->GetId(&sbuf);
+			defaultInputDevID = sbuf;
+			dev->Release();
+
+			IMMDeviceCollection* devices;
+			deviceEnumerator->EnumAudioEndpoints(flow, role, &devices);
+			deviceEnumerator->Release();
+
+			UINT count;
+			devices->GetCount(&count);
+
+			std::vector<DeviceInfo> vec;
+			vec.reserve(count);
+
+			for (UINT i{ 0 }; i < count; ++i) {
+				devices->Item(i, &dev);
+
+				dev->GetId(&sbuf);
+				const std::wstring devID{ sbuf };
+
+				vec.emplace_back(DeviceInfo{ getDeviceFriendlyName(dev), w_converter.to_bytes(devID), getDeviceDataFlow(dev), devID == defaultInputDevID || devID == defaultOutputDevID });
+
+				dev->Release();
+			}
+
+			devices->Release();
+
+			vec.shrink_to_fit();
+			return vec;
+		}
+		static std::vector<DeviceInfo> GetAllAudioDevicesSorted(const std::function<bool(DeviceInfo, DeviceInfo)>& sorting_predicate, EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
+		{
+			auto devices{ GetAllAudioDevices(flow, role) };
+			std::sort(devices.begin(), devices.end(), sorting_predicate);
+			return devices;
+		}
+		static std::vector<DeviceInfo> GetAllAudioDevicesSorted(EDataFlow flow = EDataFlow::eAll, ERole role = ERole::eMultimedia)
+		{
+			const auto& sSorter{ std::less<std::string>() };
+			const auto& tSorter{ std::less<EDataFlow>() };
+			return GetAllAudioDevicesSorted([&sSorter, &tSorter](DeviceInfo const& l, DeviceInfo const& r) -> bool { return l.flow == r.flow ? sSorter(l.name, r.name) : tSorter(l.flow, r.flow); }, flow, role);
+		}
+
+		/// @brief	Gets the appropriate volume control object for the given string.
+		static std::unique_ptr<Volume> getObject(const std::string& target_id, const bool fuzzy, EDataFlow const& deviceFlowFilter, const bool defaultDevIsOutput = true)
+		{
+			auto target_id_lower{ str::tolower(target_id) };
+			if (fuzzy)
+				target_id_lower = str::trim(target_id_lower);
+
+			const auto& compare_target_id_to{ [&target_id_lower, &fuzzy](std::string const& s) -> bool {
+				return (target_id_lower == (fuzzy ? str::trim(s) : s)) || (fuzzy && s.find(str::trim(target_id_lower)) != std::string::npos);
+			} };
+
 			std::unique_ptr<Volume> object{ nullptr };
 
 			IMMDeviceEnumerator* deviceEnumerator{ getDeviceEnumerator() };
@@ -313,17 +401,18 @@ namespace vccli {
 			if (target_id.empty()) {
 				// DEFAULT DEVICE:
 				EDataFlow defaultDevFlow{ deviceFlowFilter };
-				if (defaultDevFlow == EDataFlow::eAll)
+				if (defaultDevFlow == EDataFlow::eAll) //< we can't request a default 'eAll' device; select input or output
 					defaultDevFlow = (defaultDevIsOutput ? EDataFlow::eRender : EDataFlow::eCapture);
 
 				deviceEnumerator->GetDefaultAudioEndpoint(defaultDevFlow, ERole::eMultimedia, &dev);
-				deviceEnumerator->Release();
+				$release(deviceEnumerator);
 				IAudioEndpointVolume* endpoint{};
 				dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpoint);
-				const auto& devName{ str::trim(getDeviceFriendlyName(dev)) };
-				dev->Release();
+				const auto& devName{ getDeviceFriendlyName(dev) };
+				const auto& deviceID{ getDeviceID(dev) };
+				$release(dev);
 
-				return std::make_unique<EndpointVolume>(endpoint, devName, defaultDevFlow, true);
+				return std::make_unique<EndpointVolume>(endpoint, devName, deviceID, defaultDevFlow, true);
 			} // Else we have an actual target ID to find
 
 			// Check if we have a valid PID
@@ -334,9 +423,9 @@ namespace vccli {
 			// Enumerate all devices of the specified I/O type(s):
 			IMMDeviceCollection* devices;
 			deviceEnumerator->EnumAudioEndpoints(deviceFlowFilter, ERole::eMultimedia, &devices);
-			deviceEnumerator->Release();
+			$release(deviceEnumerator)
 
-			UINT count;
+				UINT count;
 			devices->GetCount(&count);
 
 			for (UINT i{ 0u }; object == nullptr && i < count; ++i) {
@@ -346,13 +435,14 @@ namespace vccli {
 				dev->GetId(&sbuf);
 				std::string deviceID{ w_converter.to_bytes(sbuf) };
 
-				const auto& deviceName{ str::trim(getDeviceFriendlyName(dev)) };
+				const auto& deviceName{ getDeviceFriendlyName(dev) };
+				const auto& deviceFlow{ getDeviceDataFlow(dev) };
 
 				// Check if this device is a match
-				if (!target_pid.has_value() && (target_id_lower == str::tolower(deviceID) || target_id_lower == str::tolower(deviceName))) {
+				if (!target_pid.has_value() && (compare_target_id_to(str::tolower(deviceID)) || compare_target_id_to(str::tolower(deviceName)))) {
 					IAudioEndpointVolume* endpointVolume{};
 					dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpointVolume);
-					object = std::make_unique<EndpointVolume>(endpointVolume, deviceName, getDeviceDataFlow(dev), isDefaultDevice(dev));
+					object = std::make_unique<EndpointVolume>(endpointVolume, deviceName, deviceID, deviceFlow, isDefaultDevice(dev));
 				}
 				else { // Check for matching sessions on this device:
 					IAudioSessionManager2* mgr{};
@@ -360,7 +450,7 @@ namespace vccli {
 
 					IAudioSessionEnumerator* sessionEnumerator;
 					mgr->GetSessionEnumerator(&sessionEnumerator);
-					mgr->Release();
+					$release(mgr);
 
 					IAudioSessionControl* sessionControl;
 					IAudioSessionControl2* sessionControl2;
@@ -374,29 +464,28 @@ namespace vccli {
 						sessionEnumerator->GetSession(j, &sessionControl);
 
 						sessionControl->QueryInterface<IAudioSessionControl2>(&sessionControl2);
-						sessionControl->Release();
+						$release(sessionControl);
 
 						DWORD pid;
 						sessionControl2->GetProcessId(&pid);
 
 						const auto& pname{ GetProcessNameFrom(pid) };
+						const auto& sGuid{ getSessionIdentifier(sessionControl2) }, & siGuid{ getSessionInstanceIdentifier(sessionControl2) };
 
 						// Check if this session is a match:
-						if ((pname.has_value() && target_id_lower == str::tolower(pname.value())) || (target_pid.has_value() && target_pid.value() == pid)) {
+						if ((pname.has_value() && compare_target_id_to(str::tolower(pname.value()))) || (target_pid.has_value() && target_pid.value() == pid) || compare_target_id_to(sGuid) || compare_target_id_to(siGuid)) {
 							sessionControl2->QueryInterface<ISimpleAudioVolume>(&sessionVolumeControl);
-							sessionControl2->Release();
-							object = std::make_unique<ApplicationVolume>(sessionVolumeControl, pname.value());
-							break;
+							$release(sessionControl2);
+							object = std::make_unique<ApplicationVolume>(sessionVolumeControl, pname.value(), pid, deviceFlow, deviceID, sGuid, siGuid);
+							break; //< break from session enumeration loop
 						}
-					}
-					sessionEnumerator->Release();
+						$release(sessionControl2);
+					} //< end session enumeration loop
+					$release(sessionEnumerator)
 				}
-				dev->Release();
+				$release(dev);
 			}
-			devices->Release();
-
-			if (object == nullptr) // use a NullVolume struct instead of returning nullptr
-				object = std::make_unique<NullVolume>(target_id);
+			$release(devices);
 
 			return object;
 		}

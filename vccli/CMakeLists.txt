@@ -33,6 +33,19 @@ if (WIN32) # Windows-specific resources:
 	MAKE_RESOURCE("${vccli_rc_file}" "${vccli_rc_icon}" "${vccli_rc_versioninfo}")
 endif()
 
+
+
+include(FetchContent)
+FetchContent_Declare(
+	doctest
+	GIT_REPOSITORY https://github.com/doctest/doctest.git
+	GIT_TAG v2.4.9
+)
+FetchContent_MakeAvailable(doctest)
+
+
+
+
 # Create executable
 add_executable(vccli "${SRCS}" "${vccli_rc_dir}/version.h" "${vccli_rc_file}")
 
@@ -46,9 +59,20 @@ endif()
 
 target_sources(vccli PRIVATE "${HEADERS}")
 
-target_link_libraries(vccli PRIVATE TermAPI optlib)
+target_link_libraries(vccli PRIVATE TermAPI optlib doctest)
 
 # Create an installation target:
 include(PackageInstaller)
 INSTALL_EXECUTABLE(vccli "${CMAKE_INSTALL_PREFIX}/")
+
+
+if(BUILD_TESTING)
+	include(CTest)
+	enable_testing()
+	target_compile_definitions(vccli PUBLIC DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN)
+	include(doctestAddTests)
+	doctest_discover_tests(vccli)
+else()
+	target_compile_definitions(vccli PUBLIC DOCTEST_CONFIG_DISABLE)
+endif()
 

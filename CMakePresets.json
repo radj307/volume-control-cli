@@ -31,6 +31,14 @@
       }
     },
     {
+      "name": "x64-unittest",
+      "displayName": "x64 UnitTests",
+      "inherits": "x64-debug",
+      "cacheVariables": {
+        "BUILD_TESTING": true
+      }
+    },
+    {
       "name": "x64-release",
       "displayName": "x64 Release",
       "inherits": "x64-debug",
@@ -49,6 +57,14 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "vccli_DBGMODE": "/ZI"
+      }
+    },
+    {
+      "name": "x86-unittest",
+      "displayName": "x86 UnitTests",
+      "inherits": "x86-debug",
+      "cacheVariables": {
+        "BUILD_TESTING": true
       }
     },
     {

@@ -4,40 +4,50 @@
 #include <TermAPI.hpp>
 #include <opt3.hpp>
 
+#include <typeinfo>
+
 struct PrintHelp {
 	friend std::ostream& operator<<(std::ostream& os, const PrintHelp& h)
 	{
 		return os
 			<< "vccli v" << vccli_VERSION_EXTENDED << '\n'
-			<< "  Windows commandline utility that can mute/unmute/change the volume of specific processes.\n"
+			<< "  Volume Control CLI allows you to control audio endpoints (Devices) & audio sessions (Sessions) from the commandline.\n"
 			<< '\n'
 			<< "USAGE:\n"
 			<< "  vccli [TARGET] [OPTIONS]" << '\n'
 			<< '\n'
-			<< "  The '[TARGET]' field accepts a variety of inputs:" << '\n'
-			<< "   - Process ID    (PID)        Selects a specific audio session using a known process ID number." << '\n'
-			<< "   - Process Name  (PNAME)      Selects a specific audio session using a process name." << '\n'
-			<< "   - Device ID     (DGUID)      Selects an audio endpoint using the string representation of its GUID." << '\n'
-			<< "   - Device Name   (DNAME)      Selects an audio endpoint using its interface name." << '\n'
-			<< "   - Blank                      Gets the default audio endpoint. (Use '--dev' to select input or output devices.)" << '\n'
+			<< "  The '[TARGET]' field determines which device or session to target with commands, and accepts a variety of inputs:" << '\n'
+			<< "    - Device ID                    (DGUID)      Selects an audio device using the string representation of its GUID." << '\n'
+			<< "    - Device Name                  (DNAME)      Selects an audio device using its controller interface's name." << '\n'
+			<< "    - Process ID                   (PID)        Selects a specific audio session using a known process ID number." << '\n'
+			<< "    - Process Name                 (PNAME)      Selects a specific audio session using a process name." << '\n'
+			<< "    - Session Identifier           (SGUID)      Selects any audio session with the given Session Identifier." << '\n'
+			<< "    - Session Instance Identifier  (SIGUID)     Selects a specific audio session using its Session Instance Identifier." << '\n'
+			<< "    - Blank                                     Gets the default audio endpoint for the type specified by '-d'|'--dev'." << '\n'
 			<< '\n'
-			<< "  Note that 'Device' refers to the device interface, such as 'USB Audio CODEC'; NOT the device visible in Sounds." << '\n'
+			<< "  Certain device endpoint names (DNAME) that are built-in to Windows contain trailing whitespace, such as" << '\n'
+			<< "   'USB Audio Codec '; keep this in mind when searching for devices by name, and/or use the ('-f'|'--fuzzy') option." << '\n'
 			<< '\n'
 			<< "OPTIONS:\n"
 			<< "  -h, --help                   Shows this help display, then exits." << '\n'
 			<< "      --version                Prints the current version number, then exits." << '\n'
 			<< "  -q, --quiet                  Show only minimal console output for getters; don't show any console output for setters." << '\n'
 			<< "  -n, --no-color               Disables ANSI color sequences; this option is implied when '-q'|'--quiet' is specified." << '\n'
-			<< "      --dev <i|o>              Selects input or output devices.  When targeting an endpoint, this determines the type" << '\n'
+			<< "  -d, --dev <i|o>              Selects input or output devices.  When targeting an endpoint, this determines the type" << '\n'
 			<< "                                of device to use; when targeting a session, limits the search to devices of this type." << '\n'
-			<< "  -Q, --query                  Checks if the specified TARGET exists, then exits." << '\n'
+			<< "  -f, --fuzzy                  Fuzzy search; allows partial matches instead of requiring a full match." << '\n'
+			<< "  -e, --extended               Shows additional fields when used with the query or list options." << '\n'
+			<< '\n'
+			<< "OPTIONS - Modes, Getters, & Setters:\n"
+			<< "  -Q, --query                  Shows information about the specified TARGET if it exists; otherwise shows an error." << '\n'
 			<< "  -l, --list                   Prints a list (sorted by PID) of all processes with an active audio session, then exits." << '\n'
+			<< "  -L, --list-dev               Prints a list of all audio endpoints that aren't unplugged or disabled, then exits." << '\n'
 			<< "  -v, --volume [0-100]         Gets or sets (when a number is specified) the volume of the target." << '\n'
 			<< "  -I, --increment <0-100>      Increments the volume of the target by the specified number." << '\n'
 			<< "  -D, --decrement <0-100>      Decrements the volume of the target by the specified number." << '\n'
 			<< "  -m, --is-muted [true|false]  Gets or sets (when a boolean is specified) the mute state of the target." << '\n'
-			<< "  -M, --mute                   Mutes the target.  (Equivalent to '--is-muted=true')" << '\n'
-			<< "  -U, --unmute                 Unmutes the target.  (Equivalent to '--is-muted=false')" << '\n'
+			<< "  -M, --mute                   Mutes the target.    (Equivalent to '-m=true'|'--is-muted=true')" << '\n'
+			<< "  -U, --unmute                 Unmutes the target.  (Equivalent to '-m=false'|'--is-muted=false')" << '\n'
 			;
 	}
 };
@@ -46,28 +56,94 @@ $DEFINE_EXCEPT(showhelp)
 
 // Globals:
 inline static bool quiet{ false };
+inline static bool extended{ false };
 
 enum class COLOR {
 	HEADER,
 	VALUE,
 	HIGHLIGHT,
+	LOWLIGHT,
 	WARN,
 	ERR,
+	DEVICE,
+	SESSION,
+	INPUT,
+	OUTPUT,
 };
 term::palette<COLOR> colors{
-	std::make_pair(COLOR::HEADER, color::white),
-	std::make_pair(COLOR::VALUE, color::green),
+	std::make_pair(COLOR::HEADER, term::setcolor(term::make_sequence(color::FormatFlag::Bold))),
+	std::make_pair(COLOR::VALUE, color::setcolor(1, 4, 1)),
 	std::make_pair(COLOR::HIGHLIGHT, color::cyan),
+	std::make_pair(COLOR::LOWLIGHT, color::light_gray),
 	std::make_pair(COLOR::WARN, color::yellow),
-	std::make_pair(COLOR::ERR, color::red),
+	std::make_pair(COLOR::ERR, color::orange),
+	std::make_pair(COLOR::DEVICE, color::setcolor(term::make_sequence(color::setcolor(color::lighter_purple), color::FormatFlag::Bold))),
+	std::make_pair(COLOR::SESSION, color::light_blue),
+	std::make_pair(COLOR::INPUT, color::pink),
+	std::make_pair(COLOR::OUTPUT, color::setcolor(4, 4, 0)),
 };
-inline constexpr size_t MARGIN_WIDTH{ 13ull };
+size_t MARGIN_WIDTH{ 20ull };
 
 // Forward Declarations:
 inline std::string getTargetAndValidateParams(const opt3::ArgManager&);
-inline EDataFlow getDeviceDataFlow(const opt3::ArgManager&);
+inline EDataFlow getTargetDataFlow(const opt3::ArgManager&);
 inline void handleVolumeArgs(const opt3::ArgManager&, const vccli::Volume*);
 inline void handleMuteArgs(const opt3::ArgManager&, const vccli::Volume*);
+
+
+struct VolumeObjectPrinter {
+	vccli::Volume* obj;
+
+	constexpr VolumeObjectPrinter(vccli::Volume* obj) : obj{ obj } {}
+
+	friend std::ostream& operator<<(std::ostream& os, const VolumeObjectPrinter& p)
+	{
+		if (p.obj) {
+			const bool is_session_not_device{ p.obj->is_derived_type<vccli::ApplicationVolume>() };
+
+			if (quiet) {
+				if (extended) {
+					os
+						<< (is_session_not_device ? 'P' : 'D') << "NAME: " << p.obj->resolved_name << '\n'
+						<< (is_session_not_device ? "P" : "DGU") << "ID: " << p.obj->identifier << '\n'
+						<< "TYPENAME: " << p.obj->type_name().value() << '\n'
+						<< "DATAFLOW: " << p.obj->getFlowTypeName() << '\n'
+						<< "VOLUME: " << p.obj->getVolumeScaled() << '\n'
+						<< "IS_MUTED: " << std::boolalpha << p.obj->getMuted() << std::noboolalpha << '\n'
+						;
+					if (p.obj->is_derived_type<vccli::ApplicationVolume>()) {
+						auto* app = (vccli::ApplicationVolume*)p.obj;
+						os
+							<< "SID: " << app->sessionIdentifier << '\n'
+							<< "SIID: " << app->sessionInstanceIdentifier << '\n';
+					}
+					else if (p.obj->is_derived_type<vccli::EndpointVolume>())
+						os << "DEFAULT: " << std::boolalpha << ((vccli::EndpointVolume*)p.obj)->isDefault << std::noboolalpha << '\n';
+				}
+				else os << p.obj->type_name().value_or("null");
+			}
+			else {
+				const auto& typecolor{ is_session_not_device ? COLOR::SESSION : COLOR::DEVICE };
+				os
+					<< "             " << colors(typecolor) << p.obj->resolved_name << colors() << '\n'
+					<< "Typename:    " << colors(typecolor) << p.obj->type_name().value_or("null") << colors();
+				if (!is_session_not_device && ((vccli::EndpointVolume*)p.obj)->isDefault) os << ' ' << colors(COLOR::LOWLIGHT) << "(Default)" << colors();
+				os << '\n'
+					<< "Direction:   " << colors(p.obj->flow_type == EDataFlow::eRender ? COLOR::OUTPUT : COLOR::INPUT) << p.obj->getFlowTypeName() << colors() << '\n'
+					<< "Volume:      " << colors(COLOR::VALUE) << p.obj->getVolumeScaled() << colors() << '\n'
+					<< "Muted:       " << colors(COLOR::VALUE) << std::boolalpha << p.obj->getMuted() << std::noboolalpha << colors() << '\n'
+					;
+
+				if (extended) {
+					os
+						<< ""
+						;
+				}
+			}
+		}
+		return os;
+	}
+};
 
 
 int main(const int argc, char** argv)
@@ -77,8 +153,6 @@ int main(const int argc, char** argv)
 	try {
 		using namespace opt3_literals;
 		opt3::ArgManager args{ argc, argv,
-			'h'_nocap,
-			"help"_nocap,
 			'v'_optcap,
 			"volume"_optcap,
 			'm'_optcap,
@@ -87,12 +161,16 @@ int main(const int argc, char** argv)
 			"increment"_reqcap,
 			'D'_reqcap,
 			"decrement"_reqcap,
+			'd'_reqcap,
 			"dev"_reqcap
 		};
 
 		// handle important general blocking args
 		quiet = args.check_any<opt3::Flag, opt3::Option>('q', "quiet");
 		colors.setActive(!quiet && !args.check_any<opt3::Flag, opt3::Option>('n', "no-color"));
+		extended = args.check_any<opt3::Flag, opt3::Option>('e', "extended");
+
+		if (extended) MARGIN_WIDTH += 10;
 
 		if (args.empty() || args.check_any<opt3::Flag, opt3::Option>('h', "help")) {
 			std::cout << PrintHelp{};
@@ -106,48 +184,119 @@ int main(const int argc, char** argv)
 
 		// Get the target string
 		const std::string target{ getTargetAndValidateParams(args) };
+		EDataFlow flow{ getTargetDataFlow(args) };
 
 		// Initialize Windows API
 		if (const auto& hr{ CoInitializeEx(NULL, COINIT::COINIT_MULTITHREADED) }; hr != S_OK)
 			throw make_exception("Failed to initialize COM interface with error code ", hr, ": '", GetErrorMessageFrom(hr), "'!");
 
 		// Get controller:
-		const auto& targetController{ AudioAPI::getObject(target, getDeviceDataFlow(args)) };
+		const auto& targetController{ AudioAPI::getObject(target, args.check_any<opt3::Flag, opt3::Option>('f', "fuzzy"), flow) };
+
+		if (targetController.get() == nullptr)
+			throw make_exception(
+				"Couldn't locate anything matching the given search term!\n",
+				indent(10), colors(COLOR::HEADER), "Search Term", colors(), ":    ", colors(COLOR::ERR), target, colors(), '\n',
+				indent(10), colors(COLOR::HEADER), "Device Filter", colors(), ":  ", colors(COLOR::ERR), DataFlowToString(flow), colors()
+			);
 
 		// -Q | --query
 		if (args.check_any<opt3::Flag, opt3::Option>('Q', "query")) {
-			const bool isValid{ targetController->isValid() };
+			std::cout << VolumeObjectPrinter(targetController.get()) << '\n';/*
 			const auto& typeName{ targetController->type_name() };
 			if (!quiet) {
-				const std::string head{ isValid ? "Found" : "Not Found" };
-				std::cout << head << ':' << indent(MARGIN_WIDTH, head.size() + 2ull) << colors(isValid ? COLOR::HIGHLIGHT : COLOR::ERR) << targetController->resolved_name << colors() << '\n';
-				if (isValid)
-					std::cout
-					<< "Type:" << indent(MARGIN_WIDTH, 6ull) << colors(COLOR::VALUE) << typeName.value_or("Undefined") << (target.empty() ? " (Default)" : "") << colors() << '\n'
+				std::cout << "Name:" << indent(MARGIN_WIDTH, 6) << colors(COLOR::HIGHLIGHT) << targetController->resolved_name << colors() << '\n';
+				std::cout
+					<< "Type:" << indent(MARGIN_WIDTH, 6) << colors(COLOR::VALUE) << typeName.value_or("Undefined") << colors();
+				if (targetController->is_derived_type<EndpointVolume>()) {
+					auto* dev = (EndpointVolume*)targetController.get();
+					std::cout << (dev->isDefault ? " (Default)" : "");
+				}
+				std::cout
+					<< '\n'
+					<< "DataFlow:" << indent(MARGIN_WIDTH, 10) << colors(COLOR::VALUE) << targetController->getFlowTypeName() << colors() << '\n'
 					<< "Volume:" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << str::stringify(std::fixed, std::setprecision(0), targetController->getVolumeScaled()) << colors() << '\n'
 					<< "Muted:" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << str::stringify(std::boolalpha, targetController->getMuted()) << colors() << '\n';
+				if (extended) {
+					if (targetController->is_derived_type<ApplicationVolume>()) {
+						auto* app = (ApplicationVolume*)targetController.get();
+						std::cout
+							<< "Endpoint Name (DNAME):" << indent(MARGIN_WIDTH, 23) << colors(COLOR::VALUE) << AudioAPI::getDeviceName(app->dev_id) << colors() << '\n'
+							<< "Endpoint GUID (DGUID):" << indent(MARGIN_WIDTH, 23) << colors(COLOR::VALUE) << app->dev_id << colors() << '\n'
+							<< "Session ID    (SID):" << indent(MARGIN_WIDTH, 21) << colors(COLOR::VALUE) << app->sessionIdentifier << colors() << '\n'
+							<< "Instance ID   (SIID):" << indent(MARGIN_WIDTH, 22) << colors(COLOR::VALUE) << app->sessionInstanceIdentifier << colors() << '\n'
+							;
+					}
+				}
 			}
-			else std::cout << typeName.value_or("false") << '\n';
+			else if (extended && typeName.has_value()) {
+				std::cout
+					<< typeName.value() << '\n'
+					<< targetController->getVolumeScaled() << '\n'
+					<< str::stringify(std::boolalpha, targetController->getMuted()) << '\n'
+					;
+			}
+			else std::cout << typeName.value_or("null") << '\n';*/
+
 		}
 		// -l | --list
 		else if (args.check_any<opt3::Flag, opt3::Option>('l', "list")) {
-			for (const auto& [pid, pname] : AudioAPI::GetAllAudioProcessesSorted(EDataFlow::eRender)) {
+			if (!quiet) {
+				std::cout
+					<< colors(COLOR::HEADER)
+					<< "PID" << indent(MARGIN_WIDTH, 3) << "Process Name (PNAME)" << colors() << '\n'
+					<< indent(MARGIN_WIDTH + 21, 0, '-') << '\n'
+					;
+			}
+			for (const auto& [pid, pname] : AudioAPI::GetAllAudioProcessesSorted(flow)) {
 				std::string pid_s{ std::to_string(pid) };
 				if (!quiet) std::cout << '[' << colors(COLOR::VALUE);
 				std::cout << pid_s;
 				if (!quiet) std::cout << colors() << ']' << indent(MARGIN_WIDTH, pid_s.size() + 2ull);
-				std::cout << ' ' << pname << '\n';
+				else std::cout << ';';
+				std::cout << pname << '\n';
+			}
+		}
+		// -L | --list-dev
+		else if (args.check_any<opt3::Flag, opt3::Option>('L', "list-dev")) {
+			const auto& devicesSorted{ AudioAPI::GetAllAudioDevicesSorted(flow) };
+			const size_t maxTypeNameLen{ 23ull + 3ull };
+			size_t longest_name_len{ 0ull };
+			for (const auto& it : devicesSorted) {
+				if (const auto& size{ it.name.size() }; size > longest_name_len)
+					longest_name_len = size;
+			}
+			longest_name_len += 3;
+			if (!quiet) {
+				std::cout
+					<< "Device Name (DNAME)" << indent(longest_name_len + 2, 19ull) << "Device Type";
+				if (extended) std::cout << indent(maxTypeNameLen, 11ull) << "Device ID (DGUID)" << '\n';
+				static constexpr auto DGUID_LENGTH{ 55 };
+				std::cout << indent(longest_name_len + maxTypeNameLen + 2 + (extended ? DGUID_LENGTH : 0), 0, '-') << '\n';
+			}
+			for (const auto& it : devicesSorted) {
+				const auto& typeName{ it.type_name().value_or("Undefined") };
+				if (!quiet) std::cout << '[' << colors(COLOR::HIGHLIGHT);
+				std::cout << it.name;
+				if (!quiet) std::cout << colors() << ']' << indent(longest_name_len, it.name.size()) << colors(COLOR::VALUE);
+				else std::cout << ';';
+				std::cout << typeName;
+				if (!quiet) std::cout << colors();
+				if (extended) {
+					if (!quiet) std::cout << indent(maxTypeNameLen, typeName.size());
+					else std::cout << ';';
+					std::cout << it.id << '\n';
+				}
 			}
 		}
 		// Non-blocking options:
-		else if (targetController->isValid()) {
+		else {
 			// Handle Volume Args:
 			handleVolumeArgs(args, targetController.get());
 
 			// Handle Mute Args:
 			handleMuteArgs(args, targetController.get());
 		}
-		else throw make_exception("Couldn't Find Target:  '", target, "'!");
 
 	} catch (const $EXCEPT(showhelp)& ex) {
 		std::cerr << PrintHelp{} << '\n' << colors.get_fatal() << ex.what() << '\n';
@@ -177,9 +326,9 @@ inline std::string getTargetAndValidateParams(const opt3::ArgManager& args)
 	return target;
 }
 
-inline EDataFlow getDeviceDataFlow(const opt3::ArgManager& args)
+inline EDataFlow getTargetDataFlow(const opt3::ArgManager& args)
 {
-	if (const auto& dev{ args.getv<opt3::Option>("dev") }; dev.has_value()) {
+	if (const auto& dev{ args.getv_any<opt3::Flag, opt3::Option>('d', "dev", "device") }; dev.has_value()) {
 		std::string v{ str::tolower(dev.value()) };
 		if (str::equalsAny<true>(v, "i", "in", "input", "rec", "record", "recording"))
 			return EDataFlow::eCapture;
@@ -218,6 +367,7 @@ inline void handleVolumeArgs(const opt3::ArgManager& args, const vccli::Volume* 
 			if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(controller->getVolumeScaled()) << colors() << " (-" << colors(COLOR::VALUE) << value << colors() << ')' << '\n';
 		}
 	}
+
 	if (const auto& arg{ args.get_any<opt3::Flag, opt3::Option>('v', "volume") }; arg.has_value()) {
 		if (const auto& captured{ arg.value().getValue() }; captured.has_value()) {
 			// Set
@@ -271,8 +421,6 @@ inline void handleMuteArgs(const opt3::ArgManager& args, const vccli::Volume* co
 			if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << "false" << colors() << '\n';
 		}
 	}
-
-
 
 	if (const auto& arg{ args.get_any<opt3::Flag, opt3::Option>('m', "is-muted") }; arg.has_value()) {
 		if (const auto& captured{ arg.value().getValue() }; captured.has_value()) {
