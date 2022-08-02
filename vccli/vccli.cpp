@@ -21,8 +21,8 @@ struct PrintHelp {
 			<< "    - Device Name                  (DNAME)      Selects an audio device using its controller interface's name." << '\n'
 			<< "    - Process ID                   (PID)        Selects a specific audio session using a known process ID number." << '\n'
 			<< "    - Process Name                 (PNAME)      Selects a specific audio session using a process name." << '\n'
-			<< "    - Session Identifier           (SGUID)      Selects any audio session with the given Session Identifier." << '\n'
-			<< "    - Session Instance Identifier  (SIGUID)     Selects a specific audio session using its Session Instance Identifier." << '\n'
+			<< "    - Session Identifier           (SUID)       Selects any audio session with the given Session Identifier." << '\n'
+			<< "    - Session Instance Identifier  (SGUID)      Selects a specific audio session using its Session Instance Identifier." << '\n'
 			<< "    - Blank                                     Gets the default audio endpoint for the type specified by '-d'|'--dev'." << '\n'
 			<< '\n'
 			<< "  Certain device endpoint names (DNAME) that are built-in to Windows contain trailing whitespace, such as" << '\n'
@@ -91,6 +91,9 @@ inline void handleVolumeArgs(const opt3::ArgManager&, const vccli::Volume*);
 inline void handleMuteArgs(const opt3::ArgManager&, const vccli::Volume*);
 
 
+
+
+
 struct VolumeObjectPrinter {
 	vccli::Volume* obj;
 
@@ -99,51 +102,189 @@ struct VolumeObjectPrinter {
 	friend std::ostream& operator<<(std::ostream& os, const VolumeObjectPrinter& p)
 	{
 		if (p.obj) {
-			const bool is_session_not_device{ p.obj->is_derived_type<vccli::ApplicationVolume>() };
+			const bool is_session{ p.obj->is_derived_type<vccli::ApplicationVolume>() }, is_device{ !is_session };
 
 			if (quiet) {
 				if (extended) {
 					os
-						<< (is_session_not_device ? 'P' : 'D') << "NAME: " << p.obj->resolved_name << '\n'
-						<< (is_session_not_device ? "P" : "DGU") << "ID: " << p.obj->identifier << '\n'
+						<< (is_session ? 'P' : 'D') << "NAME: " << p.obj->resolved_name << '\n'
+						<< (is_session ? "P" : "DGU") << "ID: " << p.obj->identifier << '\n'
 						<< "TYPENAME: " << p.obj->type_name().value() << '\n'
 						<< "DATAFLOW: " << p.obj->getFlowTypeName() << '\n'
 						<< "VOLUME: " << p.obj->getVolumeScaled() << '\n'
 						<< "IS_MUTED: " << std::boolalpha << p.obj->getMuted() << std::noboolalpha << '\n'
 						;
-					if (p.obj->is_derived_type<vccli::ApplicationVolume>()) {
+					if (is_session) {
 						auto* app = (vccli::ApplicationVolume*)p.obj;
 						os
-							<< "SID: " << app->sessionIdentifier << '\n'
-							<< "SIID: " << app->sessionInstanceIdentifier << '\n';
+							<< "SUID: " << app->sessionIdentifier << '\n'
+							<< "SGUID: " << app->sessionInstanceIdentifier << '\n';
 					}
-					else if (p.obj->is_derived_type<vccli::EndpointVolume>())
-						os << "DEFAULT: " << std::boolalpha << ((vccli::EndpointVolume*)p.obj)->isDefault << std::noboolalpha << '\n';
+					else if (is_device)
+						os << "IS_DEFAULT: " << std::boolalpha << ((vccli::EndpointVolume*)p.obj)->isDefault << std::noboolalpha << '\n';
 				}
 				else os << p.obj->type_name().value_or("null");
 			}
 			else {
-				const auto& typecolor{ is_session_not_device ? COLOR::SESSION : COLOR::DEVICE };
+				const auto& typecolor{ is_session ? COLOR::SESSION : COLOR::DEVICE };
 				os
-					<< "             " << colors(typecolor) << p.obj->resolved_name << colors() << '\n'
-					<< "Typename:    " << colors(typecolor) << p.obj->type_name().value_or("null") << colors();
-				if (!is_session_not_device && ((vccli::EndpointVolume*)p.obj)->isDefault) os << ' ' << colors(COLOR::LOWLIGHT) << "(Default)" << colors();
+					<< "              " << colors(typecolor) << p.obj->resolved_name << colors() << '\n'
+					<< "Typename:     " << colors(typecolor) << p.obj->type_name().value_or("null") << colors();
+				if (is_device && ((vccli::EndpointVolume*)p.obj)->isDefault) os << ' ' << colors(COLOR::LOWLIGHT) << "(Default)" << colors();
 				os << '\n'
-					<< "Direction:   " << colors(p.obj->flow_type == EDataFlow::eRender ? COLOR::OUTPUT : COLOR::INPUT) << p.obj->getFlowTypeName() << colors() << '\n'
-					<< "Volume:      " << colors(COLOR::VALUE) << p.obj->getVolumeScaled() << colors() << '\n'
-					<< "Muted:       " << colors(COLOR::VALUE) << std::boolalpha << p.obj->getMuted() << std::noboolalpha << colors() << '\n'
+					<< "Direction:    " << colors(p.obj->flow_type == EDataFlow::eRender ? COLOR::OUTPUT : COLOR::INPUT) << p.obj->getFlowTypeName() << colors() << '\n'
+					<< "Volume:       " << colors(COLOR::VALUE) << p.obj->getVolumeScaled() << colors() << '\n'
+					<< "Muted:        " << colors(COLOR::VALUE) << std::boolalpha << p.obj->getMuted() << std::noboolalpha << colors() << '\n'
 					;
 
 				if (extended) {
-					os
-						<< ""
-						;
+					if (is_session) {
+						auto* app{ (vccli::ApplicationVolume*)p.obj };
+						os
+							<< "Session ID:   " << colors(COLOR::VALUE) << app->sessionIdentifier << colors() << '\n'
+							<< "Instance ID:  " << colors(COLOR::VALUE) << app->sessionInstanceIdentifier << colors() << '\n'
+							;
+					}
 				}
 			}
 		}
 		return os;
 	}
 };
+
+namespace vccli_operators {
+	inline constexpr auto SEP{ ';' };
+	inline constexpr auto COLSZ_DNAME{ 30 };
+	inline constexpr auto COLSZ_DGUID{ 57 };
+	inline constexpr auto COLSZ_IO{ 9 };
+	inline constexpr auto COLSZ_DEFAULT{ 9 };
+
+	inline std::ostream& operator<<(std::ostream& os, const vccli::DeviceInfo& di)
+	{ // DEVICE INFO
+		using namespace vccli;
+
+		if (quiet) {
+			os
+				<< di.dname << SEP
+				<< DataFlowToString(di.flow) << SEP
+				<< std::boolalpha << di.isDefault << std::noboolalpha;
+			if (extended)
+				os << SEP << di.dguid;
+		}
+		else {
+			const auto& flow_s{ DataFlowToString(di.flow) };
+			const auto& def_s{ str::stringify(std::boolalpha, di.isDefault) };
+			os
+				<< colors(COLOR::DEVICE) << di.dname << colors() << indent(COLSZ_DNAME, di.dname.size())
+				<< colors(COLOR::VALUE) << flow_s << colors() << indent(COLSZ_IO, flow_s.size())
+				<< colors(COLOR::LOWLIGHT) << def_s << colors();
+			if (extended) os
+				<< indent(COLSZ_DEFAULT, def_s.size()) << di.dguid;
+		}
+		return os;
+	}
+
+	inline constexpr auto COLSZ_PNAME{ 24 };
+	inline constexpr auto COLSZ_PID{ 10 };
+
+	inline std::ostream& operator<<(std::ostream& os, const vccli::ProcessInfo& pi)
+	{ // PROCESS INFO
+		using namespace vccli;
+
+		if (quiet) {
+			os
+				<< pi.pid << SEP
+				<< pi.pname << SEP
+				;
+		}
+		else {
+			const auto& flow_s{ DataFlowToString(pi.flow) };
+			const auto& pid_s{ std::to_string(pi.pid) };
+			os
+				<< '[' << colors(COLOR::SESSION) << pid_s << colors() << ']' << indent(COLSZ_PID, pid_s.size() + 2)
+				<< colors(COLOR::SESSION) << pi.pname << colors() << indent(COLSZ_PNAME, pi.pname.size())
+				;
+		}
+
+		os << static_cast<DeviceInfo>(pi);
+
+		if (extended) {
+			if (quiet) os 
+				<< SEP
+				<< pi.suid << SEP
+				<< pi.sguid
+				;
+			else os
+				<< indent(2)
+				<< colors(COLOR::DEVICE) << pi.dguid << colors() << SEP
+				<< pi.suid << SEP
+				<< pi.sguid
+				;
+		}
+		return os;
+	}
+
+	template<std::derived_from<vccli::basic_info> T>
+	struct InfoLister {
+		std::vector<T> vec;
+
+		InfoLister(std::vector<T>&& vec) : vec{ std::forward<std::vector<T>>(vec) } {}
+
+		friend std::ostream& operator<<(std::ostream& os, const InfoLister<T>& p)
+		{
+			std::vector<std::string> columns;
+
+			if (quiet) {
+				if constexpr (std::same_as<T, vccli::DeviceInfo>) {
+					os << "DNAME" << SEP << "I/O" << SEP << "IS_DEFAULT";
+					if (extended) os << SEP << "DGUID";
+				}
+				else if constexpr (std::same_as<T, vccli::ProcessInfo>) {
+					os << "PID" << SEP << "PNAME" << SEP << "DNAME" << SEP << "I/O" << SEP << "IS_DEFAULT";
+					if (extended) os << SEP << "DGUID" << SEP << "SUID" << SEP << "SGUID";
+				}
+			}
+			else {
+				if constexpr (std::same_as<T, vccli::DeviceInfo>) {
+					os
+						<< colors(COLOR::HEADER)
+						<< "Device Name (DNAME)" << indent(COLSZ_DNAME - 19)
+						<< "I/O" << indent(COLSZ_IO - 3)
+						<< "Default";
+					;
+					if (extended) os << indent(COLSZ_DEFAULT - 7) << "Device ID (DGUID)";
+				}
+				else if constexpr (std::same_as<T, vccli::ProcessInfo>) {
+					os
+						<< colors(COLOR::HEADER)
+						<< "PID" << indent(COLSZ_PID - 3)
+						<< "Process Name (PNAME)" << indent(COLSZ_PNAME - 20)
+						<< "Device Name (DNAME)" << indent(COLSZ_DNAME - 19)
+						<< "I/O" << indent(COLSZ_IO - 3)
+						<< "Default";
+					if (extended) os << indent(COLSZ_DEFAULT - 7)
+						<< "Device ID (DGUID)" << indent(COLSZ_DGUID - 17)
+						<< "Session ID" << SEP
+						<< "Instance ID";
+					os << colors();
+				}
+			}
+			os << "\n\n";
+
+			for (const auto& obj : p.vec)
+				os << obj << '\n';
+
+			return os;
+		}
+	};
+}
+
+template<std::derived_from<vccli::basic_info> T>
+vccli_operators::InfoLister<T> make_printable_list(std::vector<T>&& vec)
+{
+	return vccli_operators::InfoLister<T>{ std::forward<std::vector<T>>(vec) };
+}
+
 
 
 int main(const int argc, char** argv)
@@ -200,94 +341,23 @@ int main(const int argc, char** argv)
 				indent(10), colors(COLOR::HEADER), "Device Filter", colors(), ":  ", colors(COLOR::ERR), DataFlowToString(flow), colors()
 			);
 
-		// -Q | --query
-		if (args.check_any<opt3::Flag, opt3::Option>('Q', "query")) {
-			std::cout << VolumeObjectPrinter(targetController.get()) << '\n';/*
-			const auto& typeName{ targetController->type_name() };
-			if (!quiet) {
-				std::cout << "Name:" << indent(MARGIN_WIDTH, 6) << colors(COLOR::HIGHLIGHT) << targetController->resolved_name << colors() << '\n';
-				std::cout
-					<< "Type:" << indent(MARGIN_WIDTH, 6) << colors(COLOR::VALUE) << typeName.value_or("Undefined") << colors();
-				if (targetController->is_derived_type<EndpointVolume>()) {
-					auto* dev = (EndpointVolume*)targetController.get();
-					std::cout << (dev->isDefault ? " (Default)" : "");
-				}
-				std::cout
-					<< '\n'
-					<< "DataFlow:" << indent(MARGIN_WIDTH, 10) << colors(COLOR::VALUE) << targetController->getFlowTypeName() << colors() << '\n'
-					<< "Volume:" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << str::stringify(std::fixed, std::setprecision(0), targetController->getVolumeScaled()) << colors() << '\n'
-					<< "Muted:" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << str::stringify(std::boolalpha, targetController->getMuted()) << colors() << '\n';
-				if (extended) {
-					if (targetController->is_derived_type<ApplicationVolume>()) {
-						auto* app = (ApplicationVolume*)targetController.get();
-						std::cout
-							<< "Endpoint Name (DNAME):" << indent(MARGIN_WIDTH, 23) << colors(COLOR::VALUE) << AudioAPI::getDeviceName(app->dev_id) << colors() << '\n'
-							<< "Endpoint GUID (DGUID):" << indent(MARGIN_WIDTH, 23) << colors(COLOR::VALUE) << app->dev_id << colors() << '\n'
-							<< "Session ID    (SID):" << indent(MARGIN_WIDTH, 21) << colors(COLOR::VALUE) << app->sessionIdentifier << colors() << '\n'
-							<< "Instance ID   (SIID):" << indent(MARGIN_WIDTH, 22) << colors(COLOR::VALUE) << app->sessionInstanceIdentifier << colors() << '\n'
-							;
-					}
-				}
-			}
-			else if (extended && typeName.has_value()) {
-				std::cout
-					<< typeName.value() << '\n'
-					<< targetController->getVolumeScaled() << '\n'
-					<< str::stringify(std::boolalpha, targetController->getMuted()) << '\n'
-					;
-			}
-			else std::cout << typeName.value_or("null") << '\n';*/
+		const bool
+			listSessions{ args.check_any<opt3::Flag, opt3::Option>('l', "list") },
+			listDevices{ args.check_any<opt3::Flag, opt3::Option>('L', "list-dev") };
 
-		}
-		// -l | --list
-		else if (args.check_any<opt3::Flag, opt3::Option>('l', "list")) {
-			if (!quiet) {
-				std::cout
-					<< colors(COLOR::HEADER)
-					<< "PID" << indent(MARGIN_WIDTH, 3) << "Process Name (PNAME)" << colors() << '\n'
-					<< indent(MARGIN_WIDTH + 21, 0, '-') << '\n'
-					;
+		// -Q | --query
+		if (args.check_any<opt3::Flag, opt3::Option>('Q', "query"))
+			std::cout << VolumeObjectPrinter(targetController.get()) << '\n';
+		// list
+		else if (listSessions || listDevices) {
+			// -l | --list
+			if (listSessions) {
+				std::cout << make_printable_list(AudioAPI::GetAllAudioProcessesSorted(flow));
+				if (listDevices) std::cout << '\n';
 			}
-			for (const auto& [pid, pname] : AudioAPI::GetAllAudioProcessesSorted(flow)) {
-				std::string pid_s{ std::to_string(pid) };
-				if (!quiet) std::cout << '[' << colors(COLOR::VALUE);
-				std::cout << pid_s;
-				if (!quiet) std::cout << colors() << ']' << indent(MARGIN_WIDTH, pid_s.size() + 2ull);
-				else std::cout << ';';
-				std::cout << pname << '\n';
-			}
-		}
-		// -L | --list-dev
-		else if (args.check_any<opt3::Flag, opt3::Option>('L', "list-dev")) {
-			const auto& devicesSorted{ AudioAPI::GetAllAudioDevicesSorted(flow) };
-			const size_t maxTypeNameLen{ 23ull + 3ull };
-			size_t longest_name_len{ 0ull };
-			for (const auto& it : devicesSorted) {
-				if (const auto& size{ it.name.size() }; size > longest_name_len)
-					longest_name_len = size;
-			}
-			longest_name_len += 3;
-			if (!quiet) {
-				std::cout
-					<< "Device Name (DNAME)" << indent(longest_name_len + 2, 19ull) << "Device Type";
-				if (extended) std::cout << indent(maxTypeNameLen, 11ull) << "Device ID (DGUID)" << '\n';
-				static constexpr auto DGUID_LENGTH{ 55 };
-				std::cout << indent(longest_name_len + maxTypeNameLen + 2 + (extended ? DGUID_LENGTH : 0), 0, '-') << '\n';
-			}
-			for (const auto& it : devicesSorted) {
-				const auto& typeName{ it.type_name().value_or("Undefined") };
-				if (!quiet) std::cout << '[' << colors(COLOR::HIGHLIGHT);
-				std::cout << it.name;
-				if (!quiet) std::cout << colors() << ']' << indent(longest_name_len, it.name.size()) << colors(COLOR::VALUE);
-				else std::cout << ';';
-				std::cout << typeName;
-				if (!quiet) std::cout << colors();
-				if (extended) {
-					if (!quiet) std::cout << indent(maxTypeNameLen, typeName.size());
-					else std::cout << ';';
-					std::cout << it.id << '\n';
-				}
-			}
+			// -L | --list-dev
+			if (listDevices)
+				std::cout << make_printable_list(AudioAPI::GetAllAudioDevicesSorted(flow));
 		}
 		// Non-blocking options:
 		else {

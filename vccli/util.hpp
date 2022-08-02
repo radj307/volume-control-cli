@@ -9,6 +9,7 @@
 #include <functional>
 #include <locale>
 #include <optional>
+#include <vector>
 #include <string>
 
 #include <doctest/doctest.h>
@@ -164,7 +165,7 @@ namespace vccli {
 		case EDataFlow::eCapture:
 			return "Input";
 		case EDataFlow::eAll:
-			return "Input/Output";
+			return "In/Out";
 		default:
 			return{};
 		}
