@@ -52,11 +52,12 @@ struct PrintHelp {
 	}
 };
 
-$DEFINE_EXCEPT(showhelp)
+// Define exception type "except_showhelp":
+$DefineExcept(showhelp)
 
 // Globals:
-inline static bool quiet{ false };
-inline static bool extended{ false };
+static bool quiet{ false };
+static bool extended{ false };
 
 enum class COLOR {
 	HEADER,
@@ -368,7 +369,7 @@ int main(const int argc, char** argv)
 			handleMuteArgs(args, targetController.get());
 		}
 
-	} catch (const $EXCEPT(showhelp)& ex) {
+	} catch (const showhelp& ex) {
 		std::cerr << PrintHelp{} << '\n' << colors.get_fatal() << ex.what() << '\n';
 		rc = 1;
 	} catch (const std::exception& ex) {
@@ -392,7 +393,7 @@ inline std::string getTargetAndValidateParams(const opt3::ArgManager& args)
 	std::string target{ params.front() };
 	params.erase(params.begin());
 	// If there are any additional parameters, throw
-	if (!params.empty()) throw make_custom_exception<$EXCEPT(showhelp)>("Unexpected Arguments:  ", str::join(params, ", "));
+	if (!params.empty()) throw make_custom_exception<showhelp>("Unexpected Arguments:  ", str::join(params, ", "));
 	return target;
 }
 
