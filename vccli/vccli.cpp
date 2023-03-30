@@ -83,7 +83,7 @@ term::palette<COLOR> colors{
 	std::make_pair(COLOR::INPUT, color::pink),
 	std::make_pair(COLOR::OUTPUT, color::setcolor(4, 4, 0)),
 };
-size_t MARGIN_WIDTH{ 20ull };
+size_t MARGIN_WIDTH{ 12ull };
 
 // Forward Declarations:
 inline std::string getTargetAndValidateParams(const opt3::ArgManager&);
@@ -92,12 +92,17 @@ inline void handleVolumeArgs(const opt3::ArgManager&, const vccli::Volume*);
 inline void handleMuteArgs(const opt3::ArgManager&, const vccli::Volume*);
 
 
-
-
-
+/**
+ * @struct	VolumeObjectPrinter
+ * @brief	Stream functor that pretty-prints a vccli::Volume object.
+ */
 struct VolumeObjectPrinter {
 	vccli::Volume* obj;
 
+	/**
+	 * @brief		Creates a new VolumeObjectPrinter instance with the given Volume object pointer.
+	 * @param obj	A pointer to a valid Volume object to print.
+	 */
 	constexpr VolumeObjectPrinter(vccli::Volume* obj) : obj{ obj } {}
 
 	friend std::ostream& operator<<(std::ostream& os, const VolumeObjectPrinter& p)
@@ -131,8 +136,11 @@ struct VolumeObjectPrinter {
 				os
 					<< "              " << colors(typecolor) << p.obj->resolved_name << colors() << '\n'
 					<< "Typename:     " << colors(typecolor) << p.obj->type_name().value_or("null") << colors();
-				if (is_device && ((vccli::EndpointVolume*)p.obj)->isDefault) os << ' ' << colors(COLOR::LOWLIGHT) << "(Default)" << colors();
-				os << '\n'
+				if (is_device && ((vccli::EndpointVolume*)p.obj)->isDefault) os << ' ' << colors(COLOR::LOWLIGHT) << "(Default)" << colors() << '\n';
+				if (is_session)
+					os << '\n'
+					<< "PID:          " << colors(COLOR::LOWLIGHT) << p.obj->identifier << colors() << '\n';
+				os
 					<< "Direction:    " << colors(p.obj->flow_type == EDataFlow::eRender ? COLOR::OUTPUT : COLOR::INPUT) << p.obj->getFlowTypeName() << colors() << '\n'
 					<< "Volume:       " << colors(COLOR::VALUE) << p.obj->getVolumeScaled() << colors() << '\n'
 					<< "Muted:        " << colors(COLOR::VALUE) << std::boolalpha << p.obj->getMuted() << std::noboolalpha << colors() << '\n'
@@ -210,7 +218,7 @@ namespace vccli_operators {
 		os << static_cast<DeviceInfo>(pi);
 
 		if (extended) {
-			if (quiet) os 
+			if (quiet) os
 				<< SEP
 				<< pi.suid << SEP
 				<< pi.sguid
@@ -293,26 +301,18 @@ int main(const int argc, char** argv)
 	using namespace vccli;
 	int rc{ 0 };
 	try {
-		using namespace opt3_literals;
 		opt3::ArgManager args{ argc, argv,
-			'v'_optcap,
-			"volume"_optcap,
-			'm'_optcap,
-			"is-muted"_optcap,
-			'I'_reqcap,
-			"increment"_reqcap,
-			'D'_reqcap,
-			"decrement"_reqcap,
-			'd'_reqcap,
-			"dev"_reqcap
+			opt3::make_template(opt3::CaptureStyle::Optional, 'v', "volume"),
+			opt3::make_template(opt3::CaptureStyle::Optional, 'm', "mute", "muted", "is-muted"),
+			opt3::make_template(opt3::CaptureStyle::Required, 'I', "increment"),
+			opt3::make_template(opt3::CaptureStyle::Required, 'D', "decrement"),
+			opt3::make_template(opt3::CaptureStyle::Required, 'd', "dev"),
 		};
 
-		// handle important general blocking args
+		// handle important general args
 		quiet = args.check_any<opt3::Flag, opt3::Option>('q', "quiet");
 		colors.setActive(!quiet && !args.check_any<opt3::Flag, opt3::Option>('n', "no-color"));
 		extended = args.check_any<opt3::Flag, opt3::Option>('e', "extended");
-
-		if (extended) MARGIN_WIDTH += 10;
 
 		if (args.empty() || args.check_any<opt3::Flag, opt3::Option>('h', "help")) {
 			std::cout << PrintHelp{};
@@ -333,9 +333,9 @@ int main(const int argc, char** argv)
 			throw make_exception("Failed to initialize COM interface with error code ", hr, ": '", GetErrorMessageFrom(hr), "'!");
 
 		// Get controller:
-		const auto& targetController{ AudioAPI::getObject(target, args.check_any<opt3::Flag, opt3::Option>('f', "fuzzy"), flow) };
+		const auto& targetControllers{ AudioAPI::getObjects(target, args.check_any<opt3::Flag, opt3::Option>('f', "fuzzy"), flow) };
 
-		if (targetController.get() == nullptr)
+		if (targetControllers.empty())
 			throw make_exception(
 				"Couldn't locate anything matching the given search term!\n",
 				indent(10), colors(COLOR::HEADER), "Search Term", colors(), ":    ", colors(COLOR::ERR), target, colors(), '\n',
@@ -347,8 +347,14 @@ int main(const int argc, char** argv)
 			listDevices{ args.check_any<opt3::Flag, opt3::Option>('L', "list-dev") };
 
 		// -Q | --query
-		if (args.check_any<opt3::Flag, opt3::Option>('Q', "query"))
-			std::cout << VolumeObjectPrinter(targetController.get()) << '\n';
+		if (args.check_any<opt3::Flag, opt3::Option>('Q', "query")) {
+			bool fst{ true };
+			for (const auto& it : targetControllers) {
+				if (fst) fst = false;
+				else std::cout << '\n';
+				std::cout << VolumeObjectPrinter(it.get());
+			}
+		}
 		// list
 		else if (listSessions || listDevices) {
 			// -l | --list
@@ -362,11 +368,13 @@ int main(const int argc, char** argv)
 		}
 		// Non-blocking options:
 		else {
-			// Handle Volume Args:
-			handleVolumeArgs(args, targetController.get());
+			for (const auto& it : targetControllers) {
+				// Handle Volume Args:
+				handleVolumeArgs(args, it.get());
 
-			// Handle Mute Args:
-			handleMuteArgs(args, targetController.get());
+				// Handle Mute Args:
+				handleMuteArgs(args, it.get());
+			}
 		}
 
 	} catch (const showhelp& ex) {
@@ -451,16 +459,16 @@ inline void handleVolumeArgs(const opt3::ArgManager& args, const vccli::Volume* 
 			else if (tgtVolume < 0.0f)
 				tgtVolume = 0.0f;
 			if (controller->getVolumeScaled() == tgtVolume) {
-				if (!quiet) std::cout << "Volume is" << indent(MARGIN_WIDTH, 10ull) << colors(COLOR::WARN) << static_cast<int>(tgtVolume) << colors() << '\n';
+				if (!quiet) std::cout << "Volume is" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::WARN) << static_cast<int>(tgtVolume) << colors() << '\n';
 			}
 			else {
 				controller->setVolumeScaled(tgtVolume);
-				if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::VALUE) << static_cast<int>(tgtVolume) << colors() << '\n';
+				if (!quiet) std::cout << "Volume =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << static_cast<int>(tgtVolume) << colors() << '\n';
 			}
 		}
 		else {
 			// Get
-			if (!quiet) std::cout << "Volume:" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE);
+			if (!quiet) std::cout << "Volume:" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE);
 			std::cout << str::stringify(std::fixed, std::setprecision(0), controller->getVolume() * 100.0f);
 			if (!quiet) std::cout << colors() << '\n';
 		}
@@ -476,20 +484,20 @@ inline void handleMuteArgs(const opt3::ArgManager& args, const vccli::Volume* co
 		throw make_exception("Conflicting Options Specified:  ", colors(COLOR::ERR), "-m", colors(), '|', colors(COLOR::ERR), "--mute", colors(), " && ", colors(COLOR::ERR), "-u", colors(), '|', colors(COLOR::ERR), "--unmute", colors());
 	else if (mute) {
 		if (controller->getMuted() == true) {
-			if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::WARN) << "true" << colors() << '\n';
+			if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::WARN) << "true" << colors() << '\n';
 		}
 		else {
 			controller->mute();
-			if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << "true" << colors() << '\n';
+			if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << "true" << colors() << '\n';
 		}
 	}
 	else if (unmute) {
 		if (controller->getMuted() == false) {
-			if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::WARN) << "false" << colors() << '\n';
+			if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::WARN) << "false" << colors() << '\n';
 		}
 		else {
 			controller->unmute();
-			if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << "false" << colors() << '\n';
+			if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << "false" << colors() << '\n';
 		}
 	}
 
@@ -500,20 +508,20 @@ inline void handleMuteArgs(const opt3::ArgManager& args, const vccli::Volume* co
 			const auto& value{ str::trim(captured.value()) };
 			if (str::equalsAny<true>(value, "true", "1", "on")) {
 				if (controller->getMuted() == true) {
-					if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::WARN) << "true" << colors() << '\n';
+					if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::WARN) << "true" << colors() << '\n';
 				}
 				else {
 					controller->mute();
-					if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << "true" << colors() << '\n';
+					if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << "true" << colors() << '\n';
 				}
 			}
 			else if (str::equalsAny<true>(value, "false", "0", "off")) {
 				if (controller->getMuted() == false) {
-					if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 9ull) << colors(COLOR::WARN) << "false" << colors() << '\n';
+					if (!quiet) std::cout << "Muted is" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::WARN) << "false" << colors() << '\n';
 				}
 				else {
 					controller->unmute();
-					if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 8ull) << colors(COLOR::VALUE) << "false" << colors() << '\n';
+					if (!quiet) std::cout << "Muted =" << indent(MARGIN_WIDTH, 7ull) << colors(COLOR::VALUE) << "false" << colors() << '\n';
 				}
 			}
 			else throw make_exception("Invalid Argument Specified:  '", colors(COLOR::ERR), captured.value(), colors(), "';  Expected a boolean value ('", colors(COLOR::ERR), "true", colors(), "'/'", colors(COLOR::ERR), "false", colors(), "')!");

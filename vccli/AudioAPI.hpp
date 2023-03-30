@@ -27,7 +27,9 @@ namespace vccli {
 		std::string pname, suid, sguid;
 
 		constexpr ProcessInfo(std::string const& PNAME, const DWORD PID, const EDataFlow flow, std::string const& SUID, std::string const& SGUID, std::string const& DGUID, std::string const& DNAME, const bool isDefaultDevice)
-			: DeviceInfo(DNAME, DGUID, flow, false), pid{ PID }, pname{ PNAME }, suid{ SUID }, sguid{ SGUID } {}
+			: DeviceInfo(DNAME, DGUID, flow, false), pid{ PID }, pname{ PNAME }, suid{ SUID }, sguid{ SGUID }
+		{
+		}
 
 	};
 
@@ -434,6 +436,117 @@ namespace vccli {
 			$release(devices);
 
 			return object;
+		}
+		static std::vector<std::unique_ptr<Volume>> getObjects(const std::string& target_id, const bool fuzzy, EDataFlow const& deviceFlowFilter, const bool defaultDevIsOutput = true)
+		{
+			auto target_id_lower{ str::tolower(target_id) };
+			if (fuzzy)
+				target_id_lower = str::trim(target_id_lower);
+
+			const auto& compare_target_id_to{ [&target_id_lower, &fuzzy](std::string const& s) -> bool {
+				return (target_id_lower == (fuzzy ? str::trim(s) : s)) || (fuzzy && s.find(str::trim(target_id_lower)) != std::string::npos);
+			} };
+
+			std::vector<std::unique_ptr<Volume>> objects;
+			objects.reserve(1);
+
+			IMMDeviceEnumerator* deviceEnumerator{ getDeviceEnumerator() };
+			IMMDevice* dev;
+
+			if (target_id.empty()) {
+				// DEFAULT DEVICE:
+				EDataFlow defaultDevFlow{ deviceFlowFilter };
+				if (defaultDevFlow == EDataFlow::eAll) //< we can't request a default 'eAll' device; select input or output
+					defaultDevFlow = (defaultDevIsOutput ? EDataFlow::eRender : EDataFlow::eCapture);
+
+				deviceEnumerator->GetDefaultAudioEndpoint(defaultDevFlow, ERole::eMultimedia, &dev);
+				$release(deviceEnumerator);
+				IAudioEndpointVolume* endpoint{};
+				dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpoint);
+				const auto& devName{ getDeviceFriendlyName(dev) };
+				const auto& deviceID{ getDeviceID(dev) };
+				$release(dev);
+
+				objects.emplace_back(std::make_unique<EndpointVolume>(endpoint, devName, deviceID, defaultDevFlow, true));
+				return objects;
+			} // Else we have an actual target ID to find
+
+			// Check if we have a valid PID
+			std::optional<DWORD> target_pid;
+			if (std::all_of(target_id.begin(), target_id.end(), str::stdpred::isdigit))
+				target_pid = str::stoul(target_id);
+
+			// Enumerate all devices of the specified I/O type(s):
+			IMMDeviceCollection* devices;
+			deviceEnumerator->EnumAudioEndpoints(deviceFlowFilter, ERole::eMultimedia, &devices);
+			$release(deviceEnumerator)
+
+			UINT count;
+			devices->GetCount(&count);
+
+			objects.reserve(count);
+
+			for (UINT i{ 0u }; i < count; ++i) {
+				devices->Item(i, &dev);
+
+				LPWSTR sbuf;
+				dev->GetId(&sbuf);
+				std::string deviceID{ w_converter.to_bytes(sbuf) };
+
+				const auto& deviceName{ getDeviceFriendlyName(dev) };
+				const auto& deviceFlow{ getDeviceDataFlow(dev) };
+
+				// Check if this device is a match
+				if (!target_pid.has_value() && (compare_target_id_to(str::tolower(deviceID)) || compare_target_id_to(str::tolower(deviceName)))) {
+					IAudioEndpointVolume* endpointVolume{};
+					dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, NULL, (void**)&endpointVolume);
+					objects.emplace_back(std::make_unique<EndpointVolume>(endpointVolume, deviceName, deviceID, deviceFlow, isDefaultDevice(dev)));
+				}
+				else { // Check for matching sessions on this device:
+					IAudioSessionManager2* mgr{};
+					dev->Activate(__uuidof(IAudioSessionManager2), 0, NULL, (void**)&mgr);
+
+					IAudioSessionEnumerator* sessionEnumerator;
+					mgr->GetSessionEnumerator(&sessionEnumerator);
+					$release(mgr);
+
+					IAudioSessionControl* sessionControl;
+					IAudioSessionControl2* sessionControl2;
+					ISimpleAudioVolume* sessionVolumeControl;
+
+					// Enumerate all audio sessions on this device:
+					int sessionCount;
+					sessionEnumerator->GetCount(&sessionCount);
+
+					for (int j{ 0 }; j < sessionCount; ++j) {
+						sessionEnumerator->GetSession(j, &sessionControl);
+
+						sessionControl->QueryInterface<IAudioSessionControl2>(&sessionControl2);
+						$release(sessionControl);
+
+						DWORD pid;
+						sessionControl2->GetProcessId(&pid);
+
+						const auto& pname{ GetProcessNameFrom(pid) };
+						const auto& suid{ getSessionIdentifier(sessionControl2) }, & sguid{ getSessionInstanceIdentifier(sessionControl2) };
+
+						// Check if this session is a match:
+						if ((pname.has_value() && compare_target_id_to(str::tolower(pname.value()))) || (target_pid.has_value() && target_pid.value() == pid) || compare_target_id_to(suid) || compare_target_id_to(sguid)) {
+							sessionControl2->QueryInterface<ISimpleAudioVolume>(&sessionVolumeControl);
+							$release(sessionControl2);
+							objects.emplace_back(std::make_unique<ApplicationVolume>(sessionVolumeControl, pname.value(), pid, deviceFlow, deviceID, suid, sguid));
+							break; //< break from session enumeration loop
+						}
+						$release(sessionControl2);
+					} //< end session enumeration loop
+					$release(sessionEnumerator)
+				}
+				$release(dev);
+			}
+			$release(devices);
+
+			objects.shrink_to_fit();
+			return objects;
 		}
 
 		static bool isDefaultDevice(IMMDevice* dev)
